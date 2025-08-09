@@ -27,7 +27,7 @@ MinimalWebPlayer is a zero-config, folder-based web app for watching your locall
 
 ## Quick Start
 
-1. **Install Python 3** (and [ffmpeg](https://ffmpeg.org/)).
+1. **Install Python 3**.
 2. **Run the server:**
    ```sh
    python server.py
@@ -49,6 +49,9 @@ If your `.mkv` files have multiple audio/subtitle tracks, use the included `proc
 - **Extract English subtitles** as `.srt` files for web playback
 
 **How to use:**
+1. Install [ffmpeg](https://ffmpeg.org/).
+2. Edit the script to select your language for audio and subtitles. 
+2. Run the script. 
 ```sh
 python process_mkv.py
 ```
