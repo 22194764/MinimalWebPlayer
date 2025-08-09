@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Minimal TV Player</title>
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      width: 100vw;
+      overflow-x: hidden;
+    }
+    body {
+      display: flex;
+      height: 100vh;
+      width: 100vw;
+    }
+    #sidebar {
+      width: 250px;
+      background: #222;
+      color: #fff;
+      overflow-y: auto;
+      height: 100vh;
+      flex-shrink: 0;
+    }
+    #sidebar h2 {
+      text-align: center;
+      margin: 10px 0;
+      border-bottom: 1px solid #444;
+      padding-bottom: 5px;
+    }
+    #episodeList {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    #episodeList li {
+      padding: 10px 15px;
+      cursor: pointer;
+      border-bottom: 1px solid #333;
+    }
+    #episodeList li.active {
+      background: #555;
+      font-weight: bold;
+    }
+    #episodeList li:hover {
+      background: #444;
+    }
+    #main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      justify-content: center;
+      background: #111;
+      height: 100vh;
+      min-width: 0;
+    }
+    #videoWrapper {
+      width: 100%;
+      aspect-ratio: 16/9;
+      background: black;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+      min-height: 0;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      background: black;
+      outline: none;
+      object-fit: contain;
+      display: block;
+    }
+    #controls {
+      text-align: center;
+      margin: 10px 0;
+    }
+    button {
+      background: #333;
+      border: none;
+      color: white;
+      padding: 10px 15px;
+      margin: 0 5px;
+      cursor: pointer;
+      font-size: 16px;
+      border-radius: 4px;
+      user-select: none;
+    }
+    button:hover {
+      background: #555;
+    }
+    @media (max-width: 800px) {
+      body {
+        flex-direction: column;
+      }
+      #sidebar {
+        width: 100vw;
+        height: auto;
+        max-height: 200px;
+      }
+      #main {
+        height: auto;
+      }
+      #videoWrapper {
+        aspect-ratio: 16/9;
+        min-height: 180px;
+        max-height: 50vh;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="sidebar">
+    <h2>Episodes</h2>
+    <ul id="episodeList"></ul>
+  </div>
+  <div id="main">
+    <div id="videoWrapper">
+      <video id="player" controls preload="auto"></video>
+    </div>
+    <div id="controls">
+      <button onclick="nextEpisode()">⏭ Next Episode</button>
+    </div>
+  </div>
+  <script>
+    const player = document.getElementById('player');
+    const episodeListEl = document.getElementById('episodeList');
+    let episodes = [];
+    let currentIndex = 0;
+
+    fetch('episodes.json')
+      .then(res => res.json())
+      .then(data => {
+        episodes = data;
+        buildEpisodeList();
+        loadEpisode(0);
+      });
+
+    function buildEpisodeList() {
+      episodeListEl.innerHTML = '';
+      episodes.forEach((ep, i) => {
+        const li = document.createElement('li');
+        li.textContent = ep;
+        li.onclick = () => loadEpisode(i);
+        episodeListEl.appendChild(li);
+      });
+      updateEpisodeStyles();
+    }
+
+    function updateEpisodeStyles() {
+      Array.from(episodeListEl.children).forEach((li, i) => {
+        li.classList.toggle('active', i === currentIndex);
+      });
+    }
+
+    function loadEpisode(index) {
+      if (index < 0 || index >= episodes.length) return;
+      currentIndex = index;
+      player.src = episodes[currentIndex];
+      player.load();
+      updateEpisodeStyles();
+    }
+
+    function nextEpisode() {
+      if (currentIndex + 1 < episodes.length) {
+        loadEpisode(currentIndex + 1);
+        player.play();
+      }
+    }
+
+    player.onended = nextEpisode;
+  </script>
+</body>
+</html>
