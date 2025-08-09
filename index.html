@@ -125,6 +125,8 @@
     </div>
     <div id="controls">
       <button onclick="nextEpisode()">⏭ Next Episode</button>
+      <button onclick="skipOpening()">⏩ Skip Opening</button>
+      <button onclick="watchFromBeginning()">🔄 Watch from Beginning</button>
     </div>
   </div>
   <script>
@@ -132,38 +134,225 @@
     const episodeListEl = document.getElementById('episodeList');
     let episodes = [];
     let currentIndex = 0;
+    let episodeTree = {};
 
-    fetch('episodes.json')
-      .then(res => res.json())
-      .then(data => {
-        episodes = data;
-        buildEpisodeList();
-        loadEpisode(0);
-      });
+    // --- Helpers for watched/resume state ---
+    function getWatchedSet() {
+      return new Set(JSON.parse(localStorage.getItem('watchedEpisodes') || '[]'));
+    }
+    function setWatchedSet(set) {
+      localStorage.setItem('watchedEpisodes', JSON.stringify([...set]));
+    }
+    function getResumeTimes() {
+      return JSON.parse(localStorage.getItem('resumeTimes') || '{}');
+    }
+    function setResumeTimes(obj) {
+      localStorage.setItem('resumeTimes', JSON.stringify(obj));
+    }
+
+    // --- Subtitle loader ---
+    function removeAllTracks() {
+      // Only remove <track> elements, not all children
+      const tracks = player.querySelectorAll('track');
+      tracks.forEach(track => track.remove());
+    }
+
+    function tryLoadSubtitleForEpisode(epPath, callback) {
+      const base = epPath.replace(/\.[^/.]+$/, "");
+      const srtUrl = base + ".srt";
+      console.log("epPath:", epPath, "srtUrl:", srtUrl);
+      fetch(srtUrl)
+        .then(res => {
+          if (res.ok) {
+            return res.text();
+          }
+          throw new Error("No subtitle found");
+        })
+        .then(srtText => {
+          const vtt = srt2vtt(srtText, -0.25);
+          const vttBlob = new Blob([vtt], { type: "text/vtt" });
+          const vttUrl = URL.createObjectURL(vttBlob);
+          const track = document.createElement('track');
+          track.kind = "subtitles";
+          track.label = "English";
+          track.srclang = "en";
+          track.src = vttUrl;
+          track.default = true;
+          player.appendChild(track);
+          if (callback) callback(true);
+        })
+        .catch(() => {
+          if (callback) callback(false);
+        });
+    }
+
+    // Simple SRT to VTT converter (client-side)
+    function srt2vtt(srt, offsetSeconds = -0.25) {
+      // Remove BOM if present
+      srt = srt.replace(/^\uFEFF/, '');
+      // Normalize line endings
+      srt = srt.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      // Split into lines
+      const lines = srt.split('\n');
+      const vttLines = ['WEBVTT\n'];
+      const timeRe = /^(\d{2}):(\d{2}):(\d{2}),(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2}),(\d{3})(.*)$/;
+      for (let i = 0; i < lines.length; i++) {
+        const m = lines[i].match(timeRe);
+        if (m) {
+          // Parse start and end times
+          function toMs(h, m, s, ms) {
+            return (
+              parseInt(h) * 3600000 +
+              parseInt(m) * 60000 +
+              parseInt(s) * 1000 +
+              parseInt(ms)
+            );
+          }
+          function toVtt(ts) {
+            let ms = Math.max(0, ts); // Prevent negative times
+            const h = Math.floor(ms / 3600000);
+            ms %= 3600000;
+            const m = Math.floor(ms / 60000);
+            ms %= 60000;
+            const s = Math.floor(ms / 1000);
+            ms %= 1000;
+            return (
+              String(h).padStart(2, '0') +
+              ':' +
+              String(m).padStart(2, '0') +
+              ':' +
+              String(s).padStart(2, '0') +
+              '.' +
+              String(ms).padStart(3, '0')
+            );
+          }
+          const startMs =
+            toMs(m[1], m[2], m[3], m[4]) + offsetSeconds * 1000;
+          const endMs =
+            toMs(m[5], m[6], m[7], m[8]) + offsetSeconds * 1000;
+          vttLines.push(
+            toVtt(startMs) + ' --> ' + toVtt(endMs) + (m[9] || '')
+          );
+        } else {
+          vttLines.push(lines[i]);
+        }
+      }
+      return vttLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    }
+
+    // --- Build episode tree for folders ---
+    function buildTree(paths) {
+      const root = {};
+      for (const path of paths) {
+        const parts = path.split('/');
+        let node = root;
+        for (let i = 0; i < parts.length; ++i) {
+          const part = parts[i];
+          if (i === parts.length - 1) {
+            (node.files = node.files || []).push(path);
+          } else {
+            node.dirs = node.dirs || {};
+            node.dirs[part] = node.dirs[part] || {};
+            node = node.dirs[part];
+          }
+        }
+      }
+      return root;
+    }
+
+    // --- Render episode tree with dropdowns ---
+    function renderTree(node, parentUl, prefix = '') {
+      // Render files
+      if (node.files) {
+        node.files.forEach((ep, i) => {
+          const li = document.createElement('li');
+          li.textContent = ep.split('/').pop();
+          li.title = ep;
+          li.onclick = () => loadEpisode(episodes.indexOf(ep));
+          // Watched state
+          if (getWatchedSet().has(ep)) li.style.color = 'limegreen';
+          if (episodes.indexOf(ep) === currentIndex) li.classList.add('active');
+          parentUl.appendChild(li);
+        });
+      }
+      // Render subfolders
+      if (node.dirs) {
+        for (const dir in node.dirs) {
+          const folderLi = document.createElement('li');
+          folderLi.style.fontWeight = 'bold';
+          folderLi.style.cursor = 'pointer';
+          folderLi.textContent = '📁 ' + dir;
+          // Dropdown
+          const subUl = document.createElement('ul');
+          subUl.style.display = 'none';
+          subUl.style.listStyle = 'none';
+          subUl.style.paddingLeft = '18px';
+          folderLi.onclick = function(e) {
+            e.stopPropagation();
+            subUl.style.display = subUl.style.display === 'none' ? 'block' : 'none';
+          };
+          folderLi.appendChild(subUl);
+          parentUl.appendChild(folderLi);
+          renderTree(node.dirs[dir], subUl, prefix + dir + '/');
+        }
+      }
+    }
 
     function buildEpisodeList() {
       episodeListEl.innerHTML = '';
-      episodes.forEach((ep, i) => {
-        const li = document.createElement('li');
-        li.textContent = ep;
-        li.onclick = () => loadEpisode(i);
-        episodeListEl.appendChild(li);
-      });
+      episodeTree = buildTree(episodes);
+      renderTree(episodeTree, episodeListEl);
       updateEpisodeStyles();
     }
 
     function updateEpisodeStyles() {
-      Array.from(episodeListEl.children).forEach((li, i) => {
-        li.classList.toggle('active', i === currentIndex);
-      });
+      // Update watched and active states
+      const watched = getWatchedSet();
+      let idx = 0;
+      function updateLis(ul) {
+        for (const li of ul.children) {
+          if (li.querySelector('ul')) {
+            // Folder
+            updateLis(li.querySelector('ul'));
+          } else {
+            const ep = episodes[idx++];
+            // Reset styles
+            li.classList.toggle('active', idx - 1 === currentIndex);
+            if (idx - 1 === currentIndex) {
+              li.style.color = 'yellow'; // Currently playing
+            } else if (watched.has(ep)) {
+              li.style.color = 'limegreen'; // Watched
+            } else {
+              li.style.color = ''; // Default
+            }
+          }
+        }
+      }
+      updateLis(episodeListEl);
     }
 
-    function loadEpisode(index) {
+    function loadEpisode(index, fromBeginning = false) {
       if (index < 0 || index >= episodes.length) return;
       currentIndex = index;
+      removeAllTracks();
       player.src = episodes[currentIndex];
-      player.load();
-      updateEpisodeStyles();
+      tryLoadSubtitleForEpisode(episodes[currentIndex], () => {
+        player.load();
+        player.onloadedmetadata = () => {
+          // Resume time
+          const resumeTimes = getResumeTimes();
+          if (!fromBeginning && resumeTimes[episodes[currentIndex]]) {
+            player.currentTime = resumeTimes[episodes[currentIndex]];
+          } else {
+            player.currentTime = 0;
+          }
+          // Force showing subtitles
+          for (const t of player.textTracks) {
+            t.mode = 'showing';
+          }
+        };
+        updateEpisodeStyles();
+      });
     }
 
     function nextEpisode() {
@@ -173,7 +362,53 @@
       }
     }
 
-    player.onended = nextEpisode;
+    function skipOpening() {
+      player.currentTime += 90;
+    }
+
+    function watchFromBeginning() {
+      loadEpisode(currentIndex, true);
+      player.play();
+    }
+
+    // Remove chooseSubtitle and chooseAudio functions
+    // Apply preferred subtitle/audio on video load
+    player.addEventListener('loadedmetadata', () => {
+      // No-op: subtitles are auto-loaded if available
+    });
+
+    // Save watched and resume time
+    player.addEventListener('ended', () => {
+      const watched = getWatchedSet();
+      watched.add(episodes[currentIndex]);
+      setWatchedSet(watched);
+      updateEpisodeStyles();
+      nextEpisode();
+    });
+    player.addEventListener('timeupdate', () => {
+      if (player.duration > 0 && !player.paused) {
+        const resumeTimes = getResumeTimes();
+        resumeTimes[episodes[currentIndex]] = player.currentTime;
+        setResumeTimes(resumeTimes);
+      }
+    });
+    player.addEventListener('play', () => {
+      // If user seeks to end, mark as watched
+      if (player.currentTime >= player.duration - 5) {
+        const watched = getWatchedSet();
+        watched.add(episodes[currentIndex]);
+        setWatchedSet(watched);
+        updateEpisodeStyles();
+      }
+    });
+
+    fetch('episodes.json')
+      .then(res => res.json())
+      .then(data => {
+        episodes = data;
+        buildEpisodeList();
+        loadEpisode(0);
+      });
   </script>
 </body>
 </html>
