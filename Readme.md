@@ -94,7 +94,7 @@ python process_mkv.py
 - **No installation required:** Just run the server and select your media folder—no config, no database, no browser plugins.
 - **Episode auto-advance:** Automatically plays the next episode when one finishes.
 
-### v1
+### v1.0
 - Basic web-based player for local video files.
 - Simple sidebar episode list.
 - Optional batch file for quick server startup.
