@@ -95,7 +95,7 @@ python process_mkv.py
 - Optional batch file for quick server startup.
 
 ---
-**Copyright © 2025 [Your Name]. All rights reserved.**
+**Copyright © 2025 Avinash Kumaran. All rights reserved.**
 
 This software is for personal use only.  
 Copying, redistribution, or modification without explicit permission is prohibited.
