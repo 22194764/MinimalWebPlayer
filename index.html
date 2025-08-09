@@ -117,6 +117,7 @@
 <body>
   <div id="sidebar">
     <h2>Episodes</h2>
+    <div id="globalProgress" style="margin: 10px 15px 10px 15px;"></div>
     <ul id="episodeList"></ul>
   </div>
   <div id="main">
@@ -124,9 +125,9 @@
       <video id="player" controls preload="auto"></video>
     </div>
     <div id="controls">
-      <button onclick="nextEpisode()">⏭ Next Episode</button>
-      <button onclick="skipOpening()">⏩ Skip Opening</button>
-      <button onclick="watchFromBeginning()">🔄 Watch from Beginning</button>
+  <button onclick="nextEpisode()">⏭ Next Episode</button>
+  <button onclick="skipOpening()">⏩ Skip Opening</button>
+  <button onclick="watchFromBeginning()">🔄 Watch from Beginning</button>
     </div>
   </div>
   <script>
@@ -149,6 +150,7 @@
     function setResumeTimes(obj) {
       localStorage.setItem('resumeTimes', JSON.stringify(obj));
     }
+
 
     // --- Subtitle loader ---
     function removeAllTracks() {
@@ -195,7 +197,7 @@
       // Split into lines
       const lines = srt.split('\n');
       const vttLines = ['WEBVTT\n'];
-      const timeRe = /^(\d{2}):(\d{2}):(\d{2}),(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2}),(\d{3})(.*)$/;
+  const timeRe = /^(\d{2}):(\d{2}):(\d{2}),(\d{3})\s*\-\-\>\s*(\d{2}):(\d{2}):(\d{2}),(\d{3})(.*)$/;
       for (let i = 0; i < lines.length; i++) {
         const m = lines[i].match(timeRe);
         if (m) {
@@ -242,17 +244,19 @@
 
     // --- Build episode tree for folders ---
     function buildTree(paths) {
-      const root = {};
+      // Each node: { files: [], dirs: {}, watched: 0, total: 0 }
+      const root = { files: [], dirs: {}, watched: 0, total: 0 };
       for (const path of paths) {
         const parts = path.split('/');
         let node = root;
         for (let i = 0; i < parts.length; ++i) {
           const part = parts[i];
           if (i === parts.length - 1) {
-            (node.files = node.files || []).push(path);
+            node.files = node.files || [];
+            node.files.push(path);
           } else {
             node.dirs = node.dirs || {};
-            node.dirs[part] = node.dirs[part] || {};
+            node.dirs[part] = node.dirs[part] || { files: [], dirs: {}, watched: 0, total: 0 };
             node = node.dirs[part];
           }
         }
@@ -260,28 +264,66 @@
       return root;
     }
 
-    // --- Render episode tree with dropdowns ---
-    function renderTree(node, parentUl, prefix = '') {
-      // Render files
+    // Recursively count watched/total for each node
+    function countWatched(node, watchedSet) {
+      let watched = 0, total = 0;
       if (node.files) {
-        node.files.forEach((ep, i) => {
-          const li = document.createElement('li');
-          li.textContent = ep.split('/').pop();
-          li.title = ep;
-          li.onclick = () => loadEpisode(episodes.indexOf(ep));
-          // Watched state
-          if (getWatchedSet().has(ep)) li.style.color = 'limegreen';
-          if (episodes.indexOf(ep) === currentIndex) li.classList.add('active');
-          parentUl.appendChild(li);
-        });
+        total += node.files.length;
+        for (const ep of node.files) {
+          if (watchedSet.has(ep)) watched++;
+        }
       }
-      // Render subfolders
+      if (node.dirs) {
+        for (const dir in node.dirs) {
+          const res = countWatched(node.dirs[dir], watchedSet);
+          watched += res.watched;
+          total += res.total;
+        }
+      }
+      node.watched = watched;
+      node.total = total;
+      return { watched, total };
+    }
+
+    // --- Render episode tree with dropdowns ---
+    function renderProgressBar(watched, total) {
+      const percent = total === 0 ? 0 : Math.round((watched / total) * 100);
+      const bar = document.createElement('div');
+      bar.style.position = 'relative';
+      bar.style.height = '10px';
+      bar.style.background = '#333';
+      bar.style.borderRadius = '5px';
+      bar.style.margin = '4px 0 8px 0';
+      bar.style.overflow = 'hidden';
+      const fill = document.createElement('div');
+      fill.style.height = '100%';
+      fill.style.width = percent + '%';
+      fill.style.background = percent === 100 ? 'limegreen' : '#8888ff';
+      fill.style.transition = 'width 0.3s';
+      bar.appendChild(fill);
+      const label = document.createElement('span');
+      label.textContent = `${watched}/${total}`;
+      label.style.position = 'absolute';
+      label.style.left = '50%';
+      label.style.top = '-18px';
+      label.style.transform = 'translateX(-50%)';
+      label.style.fontSize = '12px';
+      label.style.color = '#ccc';
+      bar.appendChild(label);
+      return bar;
+    }
+
+    function renderTree(node, parentUl, prefix = '') {
+      // Render subfolders first
       if (node.dirs) {
         for (const dir in node.dirs) {
           const folderLi = document.createElement('li');
           folderLi.style.fontWeight = 'bold';
           folderLi.style.cursor = 'pointer';
           folderLi.textContent = '📁 ' + dir;
+          // Progress bar for this folder
+          const progress = renderProgressBar(node.dirs[dir].watched, node.dirs[dir].total);
+          folderLi.appendChild(progress);
           // Dropdown
           const subUl = document.createElement('ul');
           subUl.style.display = 'none';
@@ -296,11 +338,30 @@
           renderTree(node.dirs[dir], subUl, prefix + dir + '/');
         }
       }
+      // Render files
+      if (node.files) {
+        node.files.forEach((ep, i) => {
+          const li = document.createElement('li');
+          li.textContent = ep.split('/').pop();
+          li.title = ep;
+          li.onclick = () => loadEpisode(episodes.indexOf(ep));
+          // Watched state
+          if (getWatchedSet().has(ep)) li.style.color = 'limegreen';
+          if (episodes.indexOf(ep) === currentIndex) li.classList.add('active');
+          parentUl.appendChild(li);
+        });
+      }
     }
 
     function buildEpisodeList() {
       episodeListEl.innerHTML = '';
       episodeTree = buildTree(episodes);
+      const watchedSet = getWatchedSet();
+      countWatched(episodeTree, watchedSet);
+      // Global progress bar
+      const globalProgress = document.getElementById('globalProgress');
+      globalProgress.innerHTML = '';
+      globalProgress.appendChild(renderProgressBar(episodeTree.watched, episodeTree.total));
       renderTree(episodeTree, episodeListEl);
       updateEpisodeStyles();
     }

@@ -76,6 +76,8 @@ python process_mkv.py
 ---
 
 ## Changelog
+### v1.2
+- Added global progress bar and sub-folder wise progress bar based on watched episodes.
 
 ### v1.1
 - Added **Skip Opening** button (jumps ahead by 1 minute 30 seconds).
